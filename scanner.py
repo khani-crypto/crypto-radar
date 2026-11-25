@@ -2,7 +2,72 @@ import os
 import time
 from datetime import datetime, timezone
 import requests
+# ================= تنظیمات فیلتر سخت‌گیرانه =================
+MIN_VOLUME_24H_USD = 50_000_000  # حداقل ۵۰ میلیون دلار حجم ۲۴ ساعته
+MIN_OI_USD = 10_000_000          # حداقل ۱۰ میلیون دلار Open Interest (در صورت وجود)
 
+def evaluate_signal(
+    symbol,
+    volume_24h_usd,
+    price_change_15m,
+    vol_spike_15m,
+    oi_change_15m,
+    oi_change_1h,
+    position,
+    futures_cvd_status,
+    spot_cvd_status,
+    spot_basis,
+    oi_usd=None
+):
+    """
+    بررسی کیفیت سیگنال برای هر دو جهت بازار.
+    خروجی: "LONG" برای سیگنال صعودی، "SHORT" برای سیگنال نزولی، یا None (حذف سیگنال).
+    """
+
+    # ۱. حذف ارزهای بی‌کیفیت و کم‌نقدینگی
+    if volume_24h_usd < MIN_VOLUME_24H_USD:
+        return None
+    if oi_usd is not None and oi_usd < MIN_OI_USD:
+        return None
+
+    # ۲. حذف نمادهای بدون بازار اسپات معتبر (مثل SAMSUNG)
+    if spot_basis is None or str(spot_basis).strip() == "N/A" or "نامشخص" in str(spot_cvd_status):
+        return None
+
+    # ۳. حذف سیگنال‌های وسط رنج
+    if "داخل رنج" in str(position):
+        return None
+
+    # ۴. تنظیم آستانه تغییر قیمت و جهش حجم
+    is_major = any(m in symbol.upper() for m in ["BTC", "ETH"])
+    min_price_change = 0.5 if is_major else 1.2  # درصد تغییر در ۱۵ دقیقه
+    min_vol_spike = 2.5 if is_major else 3.0     # ضریب جهش حجم
+
+    if vol_spike_15m < min_vol_spike:
+        return None
+
+    # ۵. بررسی ورود پول واقعی (در هر دو جهت صعودی و نزولی، OI باید رشد کند یا حداقل ریزش سنگین نداشته باشد)
+    has_oi_inflow = (oi_change_15m >= 0.3) or (oi_change_1h >= 1.0)
+    has_oi_dump = (oi_change_15m < -0.5) or (oi_change_1h < -1.0)
+
+    if not has_oi_inflow or has_oi_dump:
+        return None
+
+    # ۶. تشخیص جهت و حذف تناقض اردرفلو (CVD)
+    # --- شرط سیگنال صعودی (LONG) ---
+    if price_change_15m >= min_price_change:
+        # نباید در فیوچرز یا اسپات فشار فروش باشد
+        if "فروش" not in str(futures_cvd_status) and "فروش" not in str(spot_cvd_status):
+            return "LONG"
+
+    # --- شرط سیگنال نزولی (SHORT) ---
+    elif price_change_15m <= -min_price_change:
+        # نباید در فیوچرز یا اسپات فشار خرید باشد
+        if "خرید" not in str(futures_cvd_status) and "خرید" not in str(spot_cvd_status):
+            return "SHORT"
+
+    return None
+    
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 GITHUB_EVENT_NAME = os.environ.get("GITHUB_EVENT_NAME", "").strip()
@@ -11,9 +76,9 @@ GATE_BASE = "https://api.gateio.ws/api/v4"
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "CryptoRadarScanner/1.0"})
 
-MIN_24H_VOL_USD = 5_000_000
+MIN_24H_VOL_USD = 50_000_000
 MAX_CANDIDATES = 45
-VOL_SURGE_THRESHOLD = 2.0
+VOL_SURGE_THRESHOLD = 3.0
 OI_CHANGE_THRESHOLD = 1.5
 TOP_ALERTS_LIMIT = 5
 
@@ -382,7 +447,26 @@ def run_scan():
             basis_pct=basis_pct,
             spot_cvd=spot_cvd,
             perp_cvd=perp_cvd,
+        )        
+        if spot_price <= 0:
+            continue
+
+        signal_type = evaluate_signal(
+            symbol=contract,
+            volume_24h_usd=vol_24h,
+            price_change_15m=pct_15m,
+            vol_spike_15m=vol_ratio,
+            oi_change_15m=oi_info["oi_15m_pct"],
+            oi_change_1h=oi_info["oi_1h_pct"],
+            position=candle_info["breakout_status"],
+            futures_cvd_status=perp_cvd,
+            spot_cvd_status=spot_cvd,
+            spot_basis=basis_pct,
+            oi_usd=oi_info["oi_usd"]
         )
+        if signal_type is None:
+            continue
+            
 
         alerts.append({
             "score": score,
