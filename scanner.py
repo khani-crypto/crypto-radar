@@ -3,7 +3,7 @@ import time
 from datetime import datetime, timezone
 import requests
 # ================= تنظیمات فیلتر سخت‌گیرانه =================
-MIN_VOLUME_24H_USD = 50_000_000  # حداقل ۵۰ میلیون دلار حجم ۲۴ ساعته
+MIN_VOLUME_24H_USD = 10_000_000  # حداقل ۵۰ میلیون دلار حجم ۲۴ ساعته
 MIN_OI_USD = 10_000_000          # حداقل ۱۰ میلیون دلار Open Interest (در صورت وجود)
 
 def evaluate_signal(
