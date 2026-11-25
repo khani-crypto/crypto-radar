@@ -451,6 +451,9 @@ def run_scan():
         if spot_price <= 0:
             continue
 
+        perp_state = describe_cvd_state(perp_cvd["imbalance"], "perp") if perp_cvd["available"] else "نامشخص"
+        spot_state = describe_cvd_state(spot_cvd["imbalance"], "spot") if spot_cvd["available"] else "نامشخص"
+
         signal_type = evaluate_signal(
             symbol=contract,
             volume_24h_usd=vol_24h,
@@ -459,11 +462,12 @@ def run_scan():
             oi_change_15m=oi_info["oi_15m_pct"],
             oi_change_1h=oi_info["oi_1h_pct"],
             position=candle_info["breakout_status"],
-            futures_cvd_status=perp_cvd,
-            spot_cvd_status=spot_cvd,
+            futures_cvd_status=perp_state,
+            spot_cvd_status=spot_state,
             spot_basis=basis_pct,
             oi_usd=oi_info["oi_usd"]
         )
+
         if signal_type is None:
             continue
             
